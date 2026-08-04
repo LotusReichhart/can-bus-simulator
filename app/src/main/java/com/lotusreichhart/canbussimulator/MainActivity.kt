@@ -1,8 +1,15 @@
 package com.lotusreichhart.canbussimulator
 
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.os.Bundle
+import android.os.IBinder
+import android.os.RemoteException
+import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -48,11 +55,41 @@ class MainActivity : ComponentActivity() {
     private val injectorViewModel: InjectorViewModel by viewModels()
     private val statisticViewModel: StatisticViewModel by viewModels()
 
+    // Tham chiếu đến interface AIDL của dịch vụ mô phỏng CAN Bus
+    private var canBusService: ICanBusService? = null
+
+    // Quản lý kết nối vòng đời với Bound Service
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            // Chuyển đổi binder nhận được sang giao diện AIDL ICanBusService
+            canBusService = ICanBusService.Stub.asInterface(service)
+            Log.d("MainActivity", "Successfully connected to CanBusService via AIDL")
+            try {
+                // Tự động kích hoạt mô phỏng sau khi kết nối thành công
+                canBusService?.startSimulation()
+            } catch (e: RemoteException) {
+                Log.e("MainActivity", "Failed to start simulation through AIDL interface", e)
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            // Đặt lại tham chiếu khi dịch vụ bị ngắt kết nối đột ngột
+            canBusService = null
+            Log.d("MainActivity", "Disconnected from CanBusService")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        onBackPressedDispatcher.addCallback(this) {
+            // Chủ động kết thúc Activity
+            finish()
+        }
         
+        // Khởi tạo Intent và liên kết (bind) đến CanBusService
         val serviceIntent = Intent(this, CanBusService::class.java)
-        startService(serviceIntent)
+        bindService(serviceIntent, serviceConnection, BIND_AUTO_CREATE)
 
         enableEdgeToEdge()
         setContent {
@@ -67,6 +104,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Hủy liên kết dịch vụ khi Activity bị hủy để tránh rò rỉ tài nguyên (Memory Leak)
+        unbindService(serviceConnection)
+        Log.d("MainActivity", "Unbound CanBusService on Activity destruction")
     }
 }
 
